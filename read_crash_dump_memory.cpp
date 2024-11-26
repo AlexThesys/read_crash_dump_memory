@@ -47,10 +47,26 @@ typedef struct search_data {
     size_t pattern_len;
 } search_data;
 
+struct module_data {
+    LPWSTR name;
+    char* base_of_image;
+    size_t size_of_image;
+};
+
+struct thread_data {
+    uint32_t tid;
+    uint32_t priority_class;
+    uint32_t priority;
+    char* teb;
+    char* stack_start_address;
+};
+
 struct dump_context {
     const char* pattern;
     size_t pattern_len;
     HANDLE file_base;
+    std::vector<module_data> m_data;
+    std::vector<thread_data> t_data;
 };
 
 static const char* page_state[] = { "MEM_COMMIT", "MEM_FREE", "MEM_RESERVE" };
@@ -160,11 +176,11 @@ static bool map_file(const char* dump_file_path, HANDLE* file_handle, HANDLE* fi
     return true;
 }
 
-static void list_memory_regions(const HANDLE& file_base) {
+static void list_memory_regions(const HANDLE* file_base) {
 
     MINIDUMP_MEMORY64_LIST* memory_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(file_base, Memory64ListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(*file_base, Memory64ListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
         perror("Failed to read Memory64ListStream.\n");
         return;
     }
@@ -181,57 +197,75 @@ static void list_memory_regions(const HANDLE& file_base) {
     }
 }
 
-static void list_modules(const HANDLE& file_base) {
+static void gather_modules(dump_context *ctx) {
     // Retrieve the Memory64ListStream
     MINIDUMP_MODULE_LIST* module_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(file_base, ModuleListStream, nullptr, reinterpret_cast<void**>(&module_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(ctx->file_base, ModuleListStream, nullptr, reinterpret_cast<void**>(&module_list), &stream_size)) {
         perror("Failed to read ModuleListStream.\n");
         return;
     }
 
     const ULONG64 num_modules = module_list->NumberOfModules;
-    printf("Number of Modules: %llu\n", num_modules);
-
     const MINIDUMP_MODULE* modules = (MINIDUMP_MODULE*)((char*)(module_list)+sizeof(MINIDUMP_MODULE_LIST));
+    ctx->m_data.resize(num_modules);
 
     for (ULONG i = 0; i < num_modules; i++) {
         const MINIDUMP_MODULE& module = modules[i];
-        wprintf((LPWSTR)L"Module name: %s\n", (WCHAR*)((char*)file_base + module.ModuleNameRva + sizeof(_MINIDUMP_STRING)));
-        printf("Base of image: 0x%p\t | Size of image: 0x%llx\n", module.BaseOfImage, module.SizeOfImage);
+        ctx->m_data[i] = { (WCHAR*)((char*)ctx->file_base + module.ModuleNameRva + sizeof(_MINIDUMP_STRING)), (char*)module.BaseOfImage, module.SizeOfImage };
     }
 }
 
-static void list_threads(const HANDLE& file_base) {
+static void gather_threads(dump_context *ctx) {
     MINIDUMP_THREAD_LIST* thread_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(file_base, ThreadListStream, nullptr, reinterpret_cast<void**>(&thread_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(ctx->file_base, ThreadListStream, nullptr, reinterpret_cast<void**>(&thread_list), &stream_size)) {
         perror("Failed to read ThreadListStream.\n");
         return;
     }
 
-    const ULONG64 num_threads = thread_list->NumberOfThreads;
-    printf("Number of threads: %llu\n", num_threads);
-
+    const ULONG32 num_threads = thread_list->NumberOfThreads;
     const MINIDUMP_THREAD* threads = (MINIDUMP_THREAD*)((char*)(thread_list)+sizeof(MINIDUMP_THREAD_LIST));
+    ctx->t_data.resize(num_threads);
 
     for (ULONG i = 0; i < num_threads; i++) {
         const MINIDUMP_THREAD& thread = threads[i];
-        printf("ThreadID: 0x%x\t | Priority Class: 0x%x\t | Priority: 0x%x\t | Teb: 0x%p\t | Stack Start Address: 0x%p\n",
-            thread.ThreadId, thread.PriorityClass, thread.Priority, thread.Teb, thread.Stack.StartOfMemoryRange);
+        ctx->t_data[i] = { thread.ThreadId, thread.PriorityClass, thread.Priority, (char*)thread.Teb, (char*)thread.Stack.StartOfMemoryRange };
     }
 }
 
-static void print_memory_info_list(const HANDLE& file_base) {
+static void list_modules(const dump_context* ctx) {
+    const ULONG64 num_modules = ctx->m_data.size();
+    printf("*** Number of Modules: %llu ***\n", num_modules);
+
+    for (ULONG i = 0; i < num_modules; i++) {
+        const module_data& module = ctx->m_data[i];
+        wprintf((LPWSTR)L"Module name: %s\n", module.name);
+        printf("Base of image: 0x%p\t | Size of image: 0x%llx\n", module.base_of_image, module.size_of_image);
+    }
+}
+
+static void list_threads(const dump_context* ctx) {
+    const ULONG64 num_threads = ctx->t_data.size();
+    printf("*** Number of threads: %llu ***\n", num_threads);
+
+    for (ULONG i = 0; i < num_threads; i++) {
+        const thread_data& thread = ctx->t_data[i];
+        printf("ThreadID: 0x%x\t | Priority Class: 0x%x\t | Priority: 0x%x\t | Teb: 0x%p\t | Stack Start Address: 0x%p\n",
+            thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
+    }
+}
+
+static void print_memory_info_list(const HANDLE* file_base) {
     MINIDUMP_MEMORY_INFO_LIST* memory_info_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(file_base, MemoryInfoListStream, nullptr, reinterpret_cast<void**>(&memory_info_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(*file_base, MemoryInfoListStream, nullptr, reinterpret_cast<void**>(&memory_info_list), &stream_size)) {
         perror("Failed to read MemoryInfoListStream.\n");
         return;
     }
 
     const ULONG64 num_entries = memory_info_list->NumberOfEntries;
-    printf("Number of Memory Info Entries: %llu\n", num_entries);
+    printf("*** Number of Memory Info Entries: %llu ***\n", num_entries);
 
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
@@ -366,9 +400,22 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
     }
 
     size_t num_matches = 0;
+    size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
-            printf("Start of Memory Region: 0x%p\tRegion Size: 0x%llx\n",
+            for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
+                const module_data& mdata = ctx->m_data[m];
+                if (((ULONG64)mdata.base_of_image < info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) > info[i].StartOfMemoryRange)) {
+                    if (prev_module == m) {
+                        continue;
+                    }
+                    prev_module = m;
+                    wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                    printf("Base of image: 0x%p\t | Size of image: 0x%llx\n", mdata.base_of_image, mdata.size_of_image);
+                }
+            }
+
+            printf("Start of Memory Region: 0x%p\t | Region Size: 0x%llx\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
             for (const char* m : match[i]) {
                 printf("Match at address: 0x%p\n", m);
@@ -583,7 +630,7 @@ input_command parse_command(dump_context *ctx, search_data *data, char *pattern)
     return command;
 }
 
-void execute_command(input_command cmd, dump_context *ctx) {
+void execute_command(input_command cmd, const dump_context *ctx) {
     switch (cmd) {
     case c_help :
         print_help();
@@ -593,16 +640,16 @@ void execute_command(input_command cmd, dump_context *ctx) {
         break;
     }
     case c_list_memory_regions :
-        list_memory_regions(ctx->file_base);
+        list_memory_regions(&ctx->file_base);
         break;
     case c_list_memory_regions_info :
-        print_memory_info_list(ctx->file_base);
+        print_memory_info_list(&ctx->file_base);
         break;
     case c_list_modules:
-        list_modules(ctx->file_base);
+        list_modules(ctx);
         break;
     case c_list_threads:
-        list_threads(ctx->file_base);
+        list_threads(ctx);
         break;
     default :
         puts("Unknown command.");
@@ -632,9 +679,12 @@ int main(int argc, const char** argv) {
         return -1;
     }
 
+    dump_context ctx = { nullptr, 0, file_base };
+    gather_modules(&ctx);
+    gather_threads(&ctx);
+
     char pattern[MAX_PATTERN_LEN];
     search_data data;
-    dump_context ctx = { nullptr, 0, file_base };
 
     print_help();
     while (1) {
