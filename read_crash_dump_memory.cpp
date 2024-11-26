@@ -326,8 +326,10 @@ static void list_threads(const dump_context* ctx) {
 
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
-        printf("ThreadID: 0x%x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n\n",
-            thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
+        //printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n\n",
+        //    thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
+        printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p\n\n",
+            thread.tid, thread.priority_class, thread.priority, (char*)thread.teb);
     }
 }
 
