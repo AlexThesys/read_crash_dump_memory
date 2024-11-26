@@ -20,6 +20,7 @@
 #define MAX_COMMAND_LEN 0X10
 #define MAX_OMP_THREADS 8
 #define MAX_MEMORY_USAGE_IDEAL 0X40000000
+#define TOO_MANY_RESULTS 0x400
 
 #pragma comment(lib, "dbghelp.lib")
 
@@ -111,6 +112,17 @@ static void print_page_type(DWORD state) {
     }
 }
 
+static bool too_many_results(size_t num_lines) {
+    if (num_lines < TOO_MANY_RESULTS) {
+        return false;
+    }
+    printf("Would you like to display %llu results? y/n ", num_lines);
+    const char ch = static_cast<char>(getchar());
+    while ((getchar()) != '\n'); // flush stdin
+    puts("");
+    return !(ch == 'y' || ch == 'Y');
+}
+
 static const char* get_page_protect(DWORD state) {
     // lets not comlicate things with other available options for now
     state &= ~(PAGE_GUARD | PAGE_NOCACHE | PAGE_WRITECOMBINE);
@@ -186,8 +198,12 @@ static void list_memory_regions(const HANDLE* file_base) {
     }
 
     // Parse and list memory regions
-    const ULONG64 num_memory_regions =  memory_list->NumberOfMemoryRanges; 
-    printf("Number of Memory Regions: %llu\n", num_memory_regions);
+    const ULONG64 num_memory_regions =  memory_list->NumberOfMemoryRanges;
+    if (too_many_results(num_memory_regions)) {
+        return;
+    }
+
+    printf("*** Number of Memory Regions: %llu ***\n", num_memory_regions);
 
     const MINIDUMP_MEMORY_DESCRIPTOR64* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR64*)((char*)(memory_list) + sizeof(MINIDUMP_MEMORY64_LIST));
 
@@ -236,6 +252,10 @@ static void gather_threads(dump_context *ctx) {
 
 static void list_modules(const dump_context* ctx) {
     const ULONG64 num_modules = ctx->m_data.size();
+    if (too_many_results(num_modules)) {
+        return;
+    }
+
     printf("*** Number of Modules: %llu ***\n", num_modules);
 
     for (ULONG i = 0; i < num_modules; i++) {
@@ -247,6 +267,11 @@ static void list_modules(const dump_context* ctx) {
 
 static void list_threads(const dump_context* ctx) {
     const ULONG64 num_threads = ctx->t_data.size();
+
+    if (too_many_results(num_threads)) {
+        return;
+    }
+
     printf("*** Number of threads: %llu ***\n", num_threads);
 
     for (ULONG i = 0; i < num_threads; i++) {
@@ -265,6 +290,10 @@ static void print_memory_info_list(const HANDLE* file_base) {
     }
 
     const ULONG64 num_entries = memory_info_list->NumberOfEntries;
+    if (too_many_results(num_entries)) {
+        return;
+    }
+
     printf("*** Number of Memory Info Entries: %llu ***\n", num_entries);
 
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
@@ -400,6 +429,17 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
     }
 
     size_t num_matches = 0;
+    for (const auto& m : match) {
+        num_matches += m.size();
+    }
+    if (!num_matches) {
+        puts("*** No matches found. ***");
+        return;
+    }
+    if (too_many_results(num_matches)) {
+        return;
+    }
+    printf("*** Total number of matches: %llu ***\n\n", num_matches);
     size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
@@ -420,14 +460,8 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
             for (const char* m : match[i]) {
                 printf("Match at address: 0x%p\n", m);
             }
-
             puts("");
-            num_matches++;
         }
-    }
-
-    if (!num_matches) {
-        puts("No matches found.");
     }
 }
 
