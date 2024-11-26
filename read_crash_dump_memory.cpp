@@ -185,6 +185,25 @@ static bool map_file(const char* dump_file_path, HANDLE* file_handle, HANDLE* fi
         return false;
     }
 
+    MINIDUMP_HEADER* header = (MINIDUMP_HEADER*)*file_base;
+    
+    if (header->Signature != MINIDUMP_SIGNATURE) {
+        puts("The provided file is not a crash dump! Exiting...");
+        UnmapViewOfFile(*file_base);
+        CloseHandle(*file_mapping_handle);
+        CloseHandle(*file_handle);
+        return false;
+    }
+
+    const bool is_full_dump = (header->Flags & MiniDumpWithFullMemory) != 0;
+    if (!is_full_dump) {
+        puts("Crash dump is not a full dump - no point analysing it. Exiting..");
+        UnmapViewOfFile(*file_base);
+        CloseHandle(*file_mapping_handle);
+        CloseHandle(*file_handle);
+        return false;
+    }
+
     return true;
 }
 
