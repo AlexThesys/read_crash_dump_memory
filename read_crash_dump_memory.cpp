@@ -203,7 +203,7 @@ static bool list_memory64_regions(const HANDLE* file_base) {
         return true;
     }
 
-    printf("*** Number of Memory Regions: %llu ***\n", num_memory_regions);
+    printf("*** Number of Memory Regions: %llu ***\n\n", num_memory_regions);
 
     const MINIDUMP_MEMORY_DESCRIPTOR64* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR64*)((char*)(memory_list) + sizeof(MINIDUMP_MEMORY64_LIST));
 
@@ -211,6 +211,7 @@ static bool list_memory64_regions(const HANDLE* file_base) {
         const MINIDUMP_MEMORY_DESCRIPTOR64& mem_desc = memory_descriptors[i];
         printf("Start Address: 0x%p | Size: 0x%08llx\n", mem_desc.StartOfMemoryRange, mem_desc.DataSize);
     }
+    puts("");
 
     return true;
 }
@@ -230,7 +231,7 @@ static bool list_memory_regions(const HANDLE* file_base) {
         return true;
     }
 
-    printf("*** Number of Memory Regions: %llu ***\n", num_memory_regions);
+    printf("*** Number of Memory Regions: %llu ***\n\n", num_memory_regions);
 
     const MINIDUMP_MEMORY_DESCRIPTOR* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR*)((char*)(memory_list)+sizeof(MINIDUMP_MEMORY_LIST));
 
@@ -238,6 +239,7 @@ static bool list_memory_regions(const HANDLE* file_base) {
         const MINIDUMP_MEMORY_DESCRIPTOR& mem_desc = memory_descriptors[i];
         printf("Start Address: 0x%p\n", mem_desc.StartOfMemoryRange);
     }
+    puts("");
 
     return true;
 }
@@ -285,12 +287,12 @@ static void list_modules(const dump_context* ctx) {
         return;
     }
 
-    printf("*** Number of Modules: %llu ***\n", num_modules);
+    printf("*** Number of Modules: %llu ***\n\n", num_modules);
 
     for (ULONG i = 0; i < num_modules; i++) {
         const module_data& module = ctx->m_data[i];
         wprintf((LPWSTR)L"Module name: %s\n", module.name);
-        printf("Base of image: 0x%p | Size of image: 0x%04llx\n", module.base_of_image, module.size_of_image);
+        printf("Base of image: 0x%p | Size of image: 0x%04llx\n\n", module.base_of_image, module.size_of_image);
     }
 }
 
@@ -301,11 +303,11 @@ static void list_threads(const dump_context* ctx) {
         return;
     }
 
-    printf("*** Number of threads: %llu ***\n", num_threads);
+    printf("*** Number of threads: %llu ***\n\n", num_threads);
 
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
-        printf("ThreadID: 0x%x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n",
+        printf("ThreadID: 0x%x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n\n",
             thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
     }
 }
@@ -323,7 +325,7 @@ static void print_memory_info_list(const HANDLE* file_base) {
         return;
     }
 
-    printf("*** Number of Memory Info Entries: %llu ***\n", num_entries);
+    printf("*** Number of Memory Info Entries: %llu ***\n\n", num_entries);
 
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
@@ -333,6 +335,7 @@ static void print_memory_info_list(const HANDLE* file_base) {
             get_page_state(memory_info[i].State), get_page_protect(memory_info[i].Protect));
         print_page_type(memory_info[i].Type);
     }
+    puts("");
 }
 
 #define _max(x,y) (x) > (y) ? (x) : (y)
@@ -469,18 +472,19 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
         return;
     }
     printf("*** Total number of matches: %llu ***\n\n", num_matches);
-    size_t prev_module = (size_t)(-1);
+   // size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
             for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
                 const module_data& mdata = ctx->m_data[m];
                 if (((ULONG64)mdata.base_of_image < info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) > info[i].StartOfMemoryRange)) {
-                    if (prev_module == m) {
-                        continue;
-                    }
-                    prev_module = m;
-                    wprintf((LPWSTR)L"* Module name: %s\n", mdata.name);
-                    printf("** Base of image: 0x%p | Size of image: 0x%08llx\n\n", mdata.base_of_image, mdata.size_of_image);
+                    //if (prev_module == m) {
+                    //    continue;
+                    //}
+                    //prev_module = m;
+                    puts("------------------------------------\n");
+                    wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                    //printf("** Base of image: 0x%p | Size of image: 0x%08llx\n\n", mdata.base_of_image, mdata.size_of_image);
                 }
             }
 
