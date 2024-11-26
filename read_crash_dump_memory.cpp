@@ -209,7 +209,7 @@ static bool list_memory64_regions(const HANDLE* file_base) {
 
     for (ULONG i = 0; i < num_memory_regions; ++i) {
         const MINIDUMP_MEMORY_DESCRIPTOR64& mem_desc = memory_descriptors[i];
-        printf("Start Address: 0x%p\t | Size: 0x%llx\n", mem_desc.StartOfMemoryRange, mem_desc.DataSize);
+        printf("Start Address: 0x%p | Size: 0x%08llx\n", mem_desc.StartOfMemoryRange, mem_desc.DataSize);
     }
 
     return true;
@@ -290,7 +290,7 @@ static void list_modules(const dump_context* ctx) {
     for (ULONG i = 0; i < num_modules; i++) {
         const module_data& module = ctx->m_data[i];
         wprintf((LPWSTR)L"Module name: %s\n", module.name);
-        printf("Base of image: 0x%p\t | Size of image: 0x%llx\n", module.base_of_image, module.size_of_image);
+        printf("Base of image: 0x%p | Size of image: 0x%04llx\n", module.base_of_image, module.size_of_image);
     }
 }
 
@@ -305,7 +305,7 @@ static void list_threads(const dump_context* ctx) {
 
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
-        printf("ThreadID: 0x%x\t | Priority Class: 0x%x\t | Priority: 0x%x\t | Teb: 0x%p\t | Stack Start Address: 0x%p\n",
+        printf("ThreadID: 0x%x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n",
             thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
     }
 }
@@ -328,7 +328,7 @@ static void print_memory_info_list(const HANDLE* file_base) {
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
     for (ULONG i = 0; i < memory_info_list->NumberOfEntries; ++i) {
-        printf("Base Address: 0x%p\t | Size: 0x%llx\t | State: %s\t | Protect: %s\t",
+        printf("Base Address: 0x%p | Size: 0x%08llx | State: %s\t | Protect: %s\t",
             memory_info[i].BaseAddress, memory_info[i].RegionSize, 
             get_page_state(memory_info[i].State), get_page_protect(memory_info[i].Protect));
         print_page_type(memory_info[i].Type);
@@ -480,11 +480,11 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
                     }
                     prev_module = m;
                     wprintf((LPWSTR)L"* Module name: %s\n", mdata.name);
-                    printf("** Base of image: 0x%p\t | Size of image: 0x%llx\n\n", mdata.base_of_image, mdata.size_of_image);
+                    printf("** Base of image: 0x%p | Size of image: 0x%08llx\n\n", mdata.base_of_image, mdata.size_of_image);
                 }
             }
 
-            printf("Start of Memory Region: 0x%p\t | Region Size: 0x%llx\n\n",
+            printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
             for (const char* m : match[i]) {
                 printf("\tMatch at address: 0x%p\n", m);
@@ -506,7 +506,9 @@ static void search_pattern_in_dump(const dump_context *ctx) {
     find_pattern(ctx, memory_descriptors, memory_list);
 
 }
- 
+
+static const char* unknown_command = "Unknown command.";
+
 static void parse_input(const char* pattern, search_data *data) {
     if (data->pattern_len > MAX_PATTERN_LEN) {
         fprintf(stderr, "Pattern exceeded maximum size of %d. Exiting...", MAX_PATTERN_LEN);
@@ -595,9 +597,9 @@ void print_help() {
     puts("?\t\t\t - list commands (this message)");
     puts("/ <pattern>\t\t - search for hex value or ascii string (no whitespace)");
     puts("q\t\t\t - quit the program");
-    puts("mr\t\t\t - list memory regions");
-    puts("mri\t\t\t - list memory regions info");
-    puts("lm\t\t\t - list process modules");
+    puts("lmr\t\t\t - list memory regions");
+    puts("lmi\t\t\t - list memory regions info");
+    puts("lM\t\t\t - list process modules");
     puts("lt\t\t\t - list process threads");
     puts("thbe\t\t\t - travers process heaps, list head blocks and calculate entropy (even slower)");
     puts("********************************\n");
@@ -667,25 +669,25 @@ input_command parse_command(dump_context *ctx, search_data *data, char *pattern)
             command = c_search_pattern;
         }
     } else if (cmd[0] == 'l') {
-        if (cmd[1] == 'm') {
+        if (cmd[1] == 'M') {
             command = c_list_modules;
         } else if (cmd[1] == 't') {
             command = c_list_threads;
+        } else if (cmd[1] == 'm') {
+            if (cmd[2] == 'r') {
+                command = c_list_memory_regions;
+            } else if (cmd[2] == 'i') {
+                command = c_list_memory_regions_info;
+            } else {
+                puts(unknown_command);
+                command = c_continue;
+            }
         } else {
-            puts("Unknown command.");
-            command = c_continue;
-        }
-    } else if ((cmd[0] == 'm') && (cmd[1] == 'r')) {
-        if (cmd[2] == 0) {
-            command = c_list_memory_regions;
-        } else if (cmd[2] == 'i') {
-            command = c_list_memory_regions_info;
-        } else {
-            puts("Unknown command.");
+            puts(unknown_command);
             command = c_continue;
         }
     } else {
-        puts("Unknown command.");
+        puts(unknown_command);
         command = c_continue;
     }
     puts("");
@@ -717,7 +719,7 @@ void execute_command(input_command cmd, const dump_context *ctx) {
         list_threads(ctx);
         break;
     default :
-        puts("Unknown command.");
+        puts(unknown_command);
         break;
     }
     puts("====================================\n");
