@@ -188,19 +188,19 @@ static bool map_file(const char* dump_file_path, HANDLE* file_handle, HANDLE* fi
     return true;
 }
 
-static void list_memory_regions(const HANDLE* file_base) {
+static bool list_memory64_regions(const HANDLE* file_base) {
 
     MINIDUMP_MEMORY64_LIST* memory_list = nullptr;
     ULONG stream_size = 0;
     if (!MiniDumpReadDumpStream(*file_base, Memory64ListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
         perror("Failed to read Memory64ListStream.\n");
-        return;
+        return false;
     }
 
     // Parse and list memory regions
     const ULONG64 num_memory_regions =  memory_list->NumberOfMemoryRanges;
     if (too_many_results(num_memory_regions)) {
-        return;
+        return true;
     }
 
     printf("*** Number of Memory Regions: %llu ***\n", num_memory_regions);
@@ -211,6 +211,35 @@ static void list_memory_regions(const HANDLE* file_base) {
         const MINIDUMP_MEMORY_DESCRIPTOR64& mem_desc = memory_descriptors[i];
         printf("Start Address: 0x%p\t | Size: 0x%llx\n", mem_desc.StartOfMemoryRange, mem_desc.DataSize);
     }
+
+    return true;
+}
+
+static bool list_memory_regions(const HANDLE* file_base) {
+
+    MINIDUMP_MEMORY_LIST* memory_list = nullptr;
+    ULONG stream_size = 0;
+    if (!MiniDumpReadDumpStream(*file_base, MemoryListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
+        perror("Failed to read MemoryListStream.\n");
+        return false;
+    }
+
+    // Parse and list memory regions
+    const ULONG64 num_memory_regions = memory_list->NumberOfMemoryRanges;
+    if (too_many_results(num_memory_regions)) {
+        return true;
+    }
+
+    printf("*** Number of Memory Regions: %llu ***\n", num_memory_regions);
+
+    const MINIDUMP_MEMORY_DESCRIPTOR* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR*)((char*)(memory_list)+sizeof(MINIDUMP_MEMORY_LIST));
+
+    for (ULONG i = 0; i < num_memory_regions; ++i) {
+        const MINIDUMP_MEMORY_DESCRIPTOR& mem_desc = memory_descriptors[i];
+        printf("Start Address: 0x%p\n", mem_desc.StartOfMemoryRange);
+    }
+
+    return true;
 }
 
 static void gather_modules(dump_context *ctx) {
@@ -299,7 +328,7 @@ static void print_memory_info_list(const HANDLE* file_base) {
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
     for (ULONG i = 0; i < memory_info_list->NumberOfEntries; ++i) {
-        printf("Base Address: 0x%p\t | Size: 0x%llx\t | Page State: %s\t | Page Protect: %s\t",
+        printf("Base Address: 0x%p\t | Size: 0x%llx\t | State: %s\t | Protect: %s\t",
             memory_info[i].BaseAddress, memory_info[i].RegionSize, 
             get_page_state(memory_info[i].State), get_page_protect(memory_info[i].Protect));
         print_page_type(memory_info[i].Type);
@@ -450,15 +479,15 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
                         continue;
                     }
                     prev_module = m;
-                    wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
-                    printf("Base of image: 0x%p\t | Size of image: 0x%llx\n", mdata.base_of_image, mdata.size_of_image);
+                    wprintf((LPWSTR)L"* Module name: %s\n", mdata.name);
+                    printf("** Base of image: 0x%p\t | Size of image: 0x%llx\n\n", mdata.base_of_image, mdata.size_of_image);
                 }
             }
 
-            printf("Start of Memory Region: 0x%p\t | Region Size: 0x%llx\n",
+            printf("Start of Memory Region: 0x%p\t | Region Size: 0x%llx\n\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
             for (const char* m : match[i]) {
-                printf("Match at address: 0x%p\n", m);
+                printf("\tMatch at address: 0x%p\n", m);
             }
             puts("");
         }
@@ -674,7 +703,9 @@ void execute_command(input_command cmd, const dump_context *ctx) {
         break;
     }
     case c_list_memory_regions :
-        list_memory_regions(&ctx->file_base);
+        if (!list_memory64_regions(&ctx->file_base)) {
+            list_memory_regions(&ctx->file_base);
+        }
         break;
     case c_list_memory_regions_info :
         print_memory_info_list(&ctx->file_base);
