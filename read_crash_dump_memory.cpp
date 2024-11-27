@@ -37,6 +37,7 @@ enum input_command {
     c_list_memory_regions_info,
     c_list_modules,
     c_list_threads,
+    c_list_thread_registers,
     c_continue,
     c_quit_program,
 };
@@ -45,21 +46,23 @@ typedef struct search_data {
     input_type type;
     uint64_t value;
     const char* pattern;
-    size_t pattern_len;
+    uint64_t pattern_len;
 } search_data;
 
 struct module_data {
     LPWSTR name;
     char* base_of_image;
-    size_t size_of_image;
+    uint64_t size_of_image;
 };
 
 struct thread_data {
     uint32_t tid;
     uint32_t priority_class;
     uint32_t priority;
-    char* teb;
-    char* stack_start_address;
+    // padding
+    //char* teb;
+    char* stack_base;
+    CONTEXT* thread_context;
 };
 
 struct dump_context {
@@ -296,7 +299,8 @@ static void gather_threads(dump_context *ctx) {
 
     for (ULONG i = 0; i < num_threads; i++) {
         const MINIDUMP_THREAD& thread = threads[i];
-        ctx->t_data[i] = { thread.ThreadId, thread.PriorityClass, thread.Priority, (char*)thread.Teb, (char*)thread.Stack.StartOfMemoryRange };
+        ctx->t_data[i] = { thread.ThreadId, thread.PriorityClass, thread.Priority,/* (char*)thread.Teb,*/ 
+                            (char*)(thread.Stack.StartOfMemoryRange+thread.Stack.Memory.DataSize), (CONTEXT*)((char*)ctx->file_base+thread.ThreadContext.Rva)};
     }
 }
 
@@ -326,10 +330,33 @@ static void list_threads(const dump_context* ctx) {
 
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
-        //printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p | Stack Start Address: 0x%p\n\n",
-        //    thread.tid, thread.priority_class, thread.priority, (char*)thread.teb, (char*)thread.stack_start_address);
-        printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Teb: 0x%p\n\n",
-            thread.tid, thread.priority_class, thread.priority, (char*)thread.teb);
+        printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Stack Base: 0x%p | RSP: 0x%p\n\n",
+            thread.tid, thread.priority_class, thread.priority, (char*)thread.stack_base, (char*)thread.thread_context->Rsp);
+    }
+}
+
+static void list_thread_registers(const dump_context* ctx) {
+    const ULONG64 num_threads = ctx->t_data.size();
+
+    if (too_many_results(num_threads)) {
+        return;
+    }
+
+    printf("*** Number of threads: %llu ***\n\n", num_threads);
+
+    for (ULONG i = 0; i < num_threads; i++) {
+        const thread_data& thread = ctx->t_data[i];
+        printf("*** ThreadID: 0x%04x ***\nRAX: 0x%p RBX: 0x%p RCX: 0x%p RDI: 0x%p RSI: 0x%p\n", thread.tid,
+            (char*)thread.thread_context->Rax, (char*)thread.thread_context->Rbx, (char*)thread.thread_context->Rcx, (char*)thread.thread_context->Rdx, 
+            (char*)thread.thread_context->Rdi, (char*)thread.thread_context->Rsi);
+        printf("RSP: 0x%p RBP: 0x%p RIP: 0x%p RFLAGS: 0x%04x MXCSR: 0x%04x\n",
+            (char*)thread.thread_context->Rsp, (char*)thread.thread_context->Rbp, (char*)thread.thread_context->Rip,
+            (char*)thread.thread_context->EFlags, (char*)thread.thread_context->MxCsr);
+        printf("R8:  0x%p R9:  0x%p R10: 0x%p R11: 0x%p\n",
+            (char*)thread.thread_context->R8, (char*)thread.thread_context->R9, (char*)thread.thread_context->R10, (char*)thread.thread_context->R11);
+        printf("R12: 0x%p R13: 0x%p R14: 0x%p R15: 0x%p\n",
+            (char*)thread.thread_context->R11, (char*)thread.thread_context->R12, (char*)thread.thread_context->R13, (char*)thread.thread_context->R14);
+        puts("\n----------------\n");
     }
 }
 
@@ -493,21 +520,22 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
         return;
     }
     printf("*** Total number of matches: %llu ***\n\n", num_matches);
-   // size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
             for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
                 const module_data& mdata = ctx->m_data[m];
-                if (((ULONG64)mdata.base_of_image < info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) > info[i].StartOfMemoryRange)) {
-                    //if (prev_module == m) {
-                    //    continue;
-                    //}
-                    //prev_module = m;
+                if (((ULONG64)mdata.base_of_image <= info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= info[i].StartOfMemoryRange)) {
                     puts("------------------------------------\n");
                     wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
-                    //printf("** Base of image: 0x%p | Size of image: 0x%08llx\n\n", mdata.base_of_image, mdata.size_of_image);
                 }
             }
+            //for (size_t t = 0, sz = ctx->t_data.size(); t < sz; t++) {
+            //    const thread_data& tdata = ctx->t_data[t];
+            //    if (((ULONG64)tdata.stack_base >= info[i].StartOfMemoryRange) && (tdata.thread_context->Rsp <= info[i].StartOfMemoryRange)) {
+            //        puts("------------------------------------\n");
+            //        wprintf((LPWSTR)L"Stack: Thread Id 0x%04x\n", tdata.tid);
+            //    }
+            //}
 
             printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
@@ -592,12 +620,12 @@ static const char* program_version = "version 0.1.0";
 
 static bool parse_cmd_args(int argc, const char** argv) {
     if (argc > (cmd_args_size + 1)) {
-        puts("Too many arguments provided: some will be discarded.");
+        puts("\nToo many arguments provided: some will be discarded.");
     }
 
     for (int i = 1, sz = _min((int)cmd_args_size, argc); i < sz; i++) {
         if ((0 == strcmp(argv[i], cmd_args[0])) || (0 == strcmp(argv[i], cmd_args[1]))) { // help
-            puts("-t=<num_threads> || --threads=\t\t -- limits the number of OMP threads");
+            puts("\n-t=<num_threads> || --threads=\t\t -- limits the number of OMP threads");
             return false;
         } else if ((argv[i] == strstr(argv[i], cmd_args[4])) || (argv[i] == strstr(argv[i], cmd_args[5]))) { // OMP threads
             const char* num_t = (argv[i][1] == '-') ? (argv[i] + strlen(cmd_args[5])) : (argv[i] + strlen(cmd_args[4]));
@@ -626,6 +654,7 @@ void print_help() {
     puts("lmi\t\t\t - list memory regions info");
     puts("lM\t\t\t - list process modules");
     puts("lt\t\t\t - list process threads");
+    puts("lr\t\t\t - list thread registers");
     puts("********************************\n");
 }
 
@@ -696,7 +725,14 @@ input_command parse_command(dump_context *ctx, search_data *data, char *pattern)
         if (cmd[1] == 'M') {
             command = c_list_modules;
         } else if (cmd[1] == 't') {
-            command = c_list_threads;
+            if (cmd[2] == 0) {
+                command = c_list_threads;
+            } else if (cmd[2] =='r') {
+                command = c_list_thread_registers;
+            } else {
+                puts(unknown_command);
+                command = c_continue;
+            }
         } else if (cmd[1] == 'm') {
             if (cmd[2] == 'r') {
                 command = c_list_memory_regions;
@@ -742,6 +778,9 @@ void execute_command(input_command cmd, const dump_context *ctx) {
     case c_list_threads:
         list_threads(ctx);
         break;
+    case c_list_thread_registers:
+        list_thread_registers(ctx);
+        break;
     default :
         puts(unknown_command);
         break;
@@ -751,7 +790,7 @@ void execute_command(input_command cmd, const dump_context *ctx) {
 
 int main(int argc, const char** argv) {
     if (!check_architecture_rt()) {
-        puts("Only x86-64 architecture is supported at the moment!");
+        puts("\nOnly x86-64 architecture is supported at the moment!");
         return 1;
     }
 
@@ -761,7 +800,7 @@ int main(int argc, const char** argv) {
 
     char dump_file_path[MAX_PATH];
     memset(dump_file_path, 0, sizeof(dump_file_path));
-    printf("Provide the path to the dmp file: ");
+    printf("\nProvide the path to the dmp file: ");
     gets_s(dump_file_path, sizeof(dump_file_path));
     puts("");
 
