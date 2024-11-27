@@ -35,6 +35,7 @@ enum input_command {
     c_search_pattern,
     c_list_memory_regions,
     c_list_memory_regions_info,
+    c_list_memory_regions_info_committed,
     c_list_modules,
     c_list_threads,
     c_list_thread_registers,
@@ -360,7 +361,7 @@ static void list_thread_registers(const dump_context* ctx) {
     }
 }
 
-static void print_memory_info_list(const HANDLE* file_base) {
+static void print_memory_info_list(const HANDLE* file_base, bool show_commited) {
     MINIDUMP_MEMORY_INFO_LIST* memory_info_list = nullptr;
     ULONG stream_size = 0;
     if (!MiniDumpReadDumpStream(*file_base, MemoryInfoListStream, nullptr, reinterpret_cast<void**>(&memory_info_list), &stream_size)) {
@@ -373,11 +374,16 @@ static void print_memory_info_list(const HANDLE* file_base) {
         return;
     }
 
-    printf("*** Number of Memory Info Entries: %llu ***\n\n", num_entries);
+    if (!show_commited) {
+        printf("*** Number of Memory Info Entries: %llu ***\n\n", num_entries);
+    }
 
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
     for (ULONG i = 0; i < memory_info_list->NumberOfEntries; ++i) {
+        if (show_commited && (memory_info[i].State != MEM_COMMIT)) {
+            continue;
+        }
         printf("Base Address: 0x%p | Size: 0x%08llx | State: %s\t | Protect: %s\t",
             memory_info[i].BaseAddress, memory_info[i].RegionSize, 
             get_page_state(memory_info[i].State), get_page_protect(memory_info[i].Protect));
@@ -652,6 +658,7 @@ void print_help() {
     puts("q\t\t\t - quit the program");
     puts("lmr\t\t\t - list memory regions");
     puts("lmi\t\t\t - list memory regions info");
+    puts("lmic\t\t\t - list committed memory regions info");
     puts("lM\t\t\t - list process modules");
     puts("lt\t\t\t - list process threads");
     puts("lr\t\t\t - list thread registers");
@@ -737,7 +744,14 @@ input_command parse_command(dump_context *ctx, search_data *data, char *pattern)
             if (cmd[2] == 'r') {
                 command = c_list_memory_regions;
             } else if (cmd[2] == 'i') {
-                command = c_list_memory_regions_info;
+                if (cmd[3] == 0) {
+                    command = c_list_memory_regions_info;
+                } else if (cmd[3] == 'c') {
+                    command = c_list_memory_regions_info_committed;
+                } else {
+                    puts(unknown_command);
+                    command = c_continue;
+                }
             } else {
                 puts(unknown_command);
                 command = c_continue;
@@ -770,7 +784,10 @@ void execute_command(input_command cmd, const dump_context *ctx) {
         }
         break;
     case c_list_memory_regions_info :
-        print_memory_info_list(&ctx->file_base);
+        print_memory_info_list(&ctx->file_base, false);
+        break;
+    case c_list_memory_regions_info_committed:
+        print_memory_info_list(&ctx->file_base, true);
         break;
     case c_list_modules:
         list_modules(ctx);
