@@ -558,15 +558,15 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
     }
     printf("*** Total number of matches: %llu ***\n\n", num_matches);
     
-    size_t prev_module = (size_t)(-1);
+    //size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
             for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
                 const module_data& mdata = ctx->m_data[m];
-                if ((prev_module != m) && ((ULONG64)mdata.base_of_image <= info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= info[i].StartOfMemoryRange)) {
+                if (/*(prev_module != m) && */((ULONG64)mdata.base_of_image <= info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= info[i].StartOfMemoryRange)) {
                     puts("------------------------------------\n");
                     wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
-                    prev_module = m;
+                    /*prev_module = m;*/
                     break;
                 }
             }
@@ -579,7 +579,7 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
             //    }
             //}
 
-            printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n",
+            printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
             for (const char* m : match[i]) {
                 printf("\tMatch at address: 0x%p\n", m);
