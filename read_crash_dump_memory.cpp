@@ -626,7 +626,6 @@ void print_help() {
     puts("lmi\t\t\t - list memory regions info");
     puts("lM\t\t\t - list process modules");
     puts("lt\t\t\t - list process threads");
-    puts("thbe\t\t\t - travers process heaps, list head blocks and calculate entropy (even slower)");
     puts("********************************\n");
 }
 
