@@ -63,7 +63,7 @@ struct thread_data {
     // padding
     //char* teb;
     char* stack_base;
-    CONTEXT* thread_context;
+    CONTEXT* context;
 };
 
 struct dump_context {
@@ -211,11 +211,11 @@ static bool map_file(const char* dump_file_path, HANDLE* file_handle, HANDLE* fi
     return true;
 }
 
-static bool list_memory64_regions(const HANDLE* file_base) {
+static bool list_memory64_regions(const dump_context* ctx) {
 
     MINIDUMP_MEMORY64_LIST* memory_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(*file_base, Memory64ListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(ctx->file_base, Memory64ListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
         perror("Failed to read Memory64ListStream.\n");
         return false;
     }
@@ -230,8 +230,18 @@ static bool list_memory64_regions(const HANDLE* file_base) {
 
     const MINIDUMP_MEMORY_DESCRIPTOR64* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR64*)((char*)(memory_list) + sizeof(MINIDUMP_MEMORY64_LIST));
 
+    ULONG prev_module = (ULONG)(-1);
     for (ULONG i = 0; i < num_memory_regions; ++i) {
         const MINIDUMP_MEMORY_DESCRIPTOR64& mem_desc = memory_descriptors[i];
+        for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
+            const module_data& mdata = ctx->m_data[m];
+            if ((prev_module != m) && ((ULONG64)mdata.base_of_image <= mem_desc.StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= mem_desc.StartOfMemoryRange)) {
+                puts("------------------------------------\n");
+                wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                prev_module = m;
+                break;
+            }
+        }
         printf("Start Address: 0x%p | Size: 0x%08llx\n", mem_desc.StartOfMemoryRange, mem_desc.DataSize);
     }
     puts("");
@@ -239,11 +249,11 @@ static bool list_memory64_regions(const HANDLE* file_base) {
     return true;
 }
 
-static bool list_memory_regions(const HANDLE* file_base) {
+static bool list_memory_regions(const dump_context* ctx) {
 
     MINIDUMP_MEMORY_LIST* memory_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(*file_base, MemoryListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(ctx->file_base, MemoryListStream, nullptr, reinterpret_cast<void**>(&memory_list), &stream_size)) {
         perror("Failed to read MemoryListStream.\n");
         return false;
     }
@@ -257,9 +267,19 @@ static bool list_memory_regions(const HANDLE* file_base) {
     printf("*** Number of Memory Regions: %llu ***\n\n", num_memory_regions);
 
     const MINIDUMP_MEMORY_DESCRIPTOR* memory_descriptors = (MINIDUMP_MEMORY_DESCRIPTOR*)((char*)(memory_list)+sizeof(MINIDUMP_MEMORY_LIST));
-
+    
+    ULONG prev_module = (ULONG)(-1);
     for (ULONG i = 0; i < num_memory_regions; ++i) {
         const MINIDUMP_MEMORY_DESCRIPTOR& mem_desc = memory_descriptors[i];
+        for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
+            const module_data& mdata = ctx->m_data[m];
+            if ((prev_module != m) && ((ULONG64)mdata.base_of_image <= mem_desc.StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= mem_desc.StartOfMemoryRange)) {
+                puts("------------------------------------\n");
+                wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                prev_module = m;
+                break;
+            }
+        }
         printf("Start Address: 0x%p\n", mem_desc.StartOfMemoryRange);
     }
     puts("");
@@ -332,7 +352,7 @@ static void list_threads(const dump_context* ctx) {
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
         printf("ThreadID: 0x%04x | Priority Class: 0x%04x | Priority: 0x%04x | Stack Base: 0x%p | RSP: 0x%p\n\n",
-            thread.tid, thread.priority_class, thread.priority, (char*)thread.stack_base, (char*)thread.thread_context->Rsp);
+            thread.tid, thread.priority_class, thread.priority, (char*)thread.stack_base, (char*)thread.context->Rsp);
     }
 }
 
@@ -348,23 +368,23 @@ static void list_thread_registers(const dump_context* ctx) {
     for (ULONG i = 0; i < num_threads; i++) {
         const thread_data& thread = ctx->t_data[i];
         printf("*** ThreadID: 0x%04x ***\nRAX: 0x%p RBX: 0x%p RCX: 0x%p RDI: 0x%p RSI: 0x%p\n", thread.tid,
-            (char*)thread.thread_context->Rax, (char*)thread.thread_context->Rbx, (char*)thread.thread_context->Rcx, (char*)thread.thread_context->Rdx, 
-            (char*)thread.thread_context->Rdi, (char*)thread.thread_context->Rsi);
+            (char*)thread.context->Rax, (char*)thread.context->Rbx, (char*)thread.context->Rcx, (char*)thread.context->Rdx, 
+            (char*)thread.context->Rdi, (char*)thread.context->Rsi);
         printf("RSP: 0x%p RBP: 0x%p RIP: 0x%p RFLAGS: 0x%04x MXCSR: 0x%04x\n",
-            (char*)thread.thread_context->Rsp, (char*)thread.thread_context->Rbp, (char*)thread.thread_context->Rip,
-            (char*)thread.thread_context->EFlags, (char*)thread.thread_context->MxCsr);
+            (char*)thread.context->Rsp, (char*)thread.context->Rbp, (char*)thread.context->Rip,
+            (char*)thread.context->EFlags, (char*)thread.context->MxCsr);
         printf("R8:  0x%p R9:  0x%p R10: 0x%p R11: 0x%p\n",
-            (char*)thread.thread_context->R8, (char*)thread.thread_context->R9, (char*)thread.thread_context->R10, (char*)thread.thread_context->R11);
+            (char*)thread.context->R8, (char*)thread.context->R9, (char*)thread.context->R10, (char*)thread.context->R11);
         printf("R12: 0x%p R13: 0x%p R14: 0x%p R15: 0x%p\n",
-            (char*)thread.thread_context->R11, (char*)thread.thread_context->R12, (char*)thread.thread_context->R13, (char*)thread.thread_context->R14);
+            (char*)thread.context->R11, (char*)thread.context->R12, (char*)thread.context->R13, (char*)thread.context->R14);
         puts("\n----------------\n");
     }
 }
 
-static void print_memory_info_list(const HANDLE* file_base, bool show_commited) {
+static void print_memory_info_list(const dump_context* ctx, bool show_commited) {
     MINIDUMP_MEMORY_INFO_LIST* memory_info_list = nullptr;
     ULONG stream_size = 0;
-    if (!MiniDumpReadDumpStream(*file_base, MemoryInfoListStream, nullptr, reinterpret_cast<void**>(&memory_info_list), &stream_size)) {
+    if (!MiniDumpReadDumpStream(ctx->file_base, MemoryInfoListStream, nullptr, reinterpret_cast<void**>(&memory_info_list), &stream_size)) {
         perror("Failed to read MemoryInfoListStream.\n");
         return;
     }
@@ -380,14 +400,25 @@ static void print_memory_info_list(const HANDLE* file_base, bool show_commited) 
 
     const MINIDUMP_MEMORY_INFO* memory_info = (MINIDUMP_MEMORY_INFO*)((char*)(memory_info_list) + sizeof(MINIDUMP_MEMORY_INFO_LIST));
 
+    ULONG prev_module = (ULONG)(-1);
     for (ULONG i = 0; i < memory_info_list->NumberOfEntries; ++i) {
-        if (show_commited && (memory_info[i].State != MEM_COMMIT)) {
+        const MINIDUMP_MEMORY_INFO& mem_info = memory_info[i];
+        if (show_commited && (mem_info.State != MEM_COMMIT)) {
             continue;
+        }
+        for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
+            const module_data& mdata = ctx->m_data[m];
+            if ((prev_module != m) && ((ULONG64)mdata.base_of_image <= mem_info.BaseAddress) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= mem_info.BaseAddress)) {
+                puts("------------------------------------\n");
+                wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                prev_module = m;
+                break;
+            }
         }
         printf("Base Address: 0x%p | Size: 0x%08llx | State: %s\t | Protect: %s\t",
             memory_info[i].BaseAddress, memory_info[i].RegionSize, 
-            get_page_state(memory_info[i].State), get_page_protect(memory_info[i].Protect));
-        print_page_type(memory_info[i].Type);
+            get_page_state(mem_info.State), get_page_protect(mem_info.Protect));
+        print_page_type(mem_info.Type);
     }
     puts("");
 }
@@ -526,24 +557,29 @@ static void find_pattern(const dump_context *ctx, const MINIDUMP_MEMORY_DESCRIPT
         return;
     }
     printf("*** Total number of matches: %llu ***\n\n", num_matches);
+    
+    size_t prev_module = (size_t)(-1);
     for (size_t i = 0; i < num_regions; i++) {
         if (match[i].size()) {
             for (size_t m = 0, sz = ctx->m_data.size(); m < sz; m++) {
                 const module_data& mdata = ctx->m_data[m];
-                if (((ULONG64)mdata.base_of_image <= info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= info[i].StartOfMemoryRange)) {
+                if ((prev_module != m) && ((ULONG64)mdata.base_of_image <= info[i].StartOfMemoryRange) && (((ULONG64)mdata.base_of_image + mdata.size_of_image) >= info[i].StartOfMemoryRange)) {
                     puts("------------------------------------\n");
                     wprintf((LPWSTR)L"Module name: %s\n", mdata.name);
+                    prev_module = m;
+                    break;
                 }
             }
             //for (size_t t = 0, sz = ctx->t_data.size(); t < sz; t++) {
             //    const thread_data& tdata = ctx->t_data[t];
-            //    if (((ULONG64)tdata.stack_base >= info[i].StartOfMemoryRange) && (tdata.thread_context->Rsp <= info[i].StartOfMemoryRange)) {
+            //    if (((ULONG64)tdata.stack_base >= info[i].StartOfMemoryRange) && (tdata.context->Rsp <= info[i].StartOfMemoryRange)) {
             //        puts("------------------------------------\n");
             //        wprintf((LPWSTR)L"Stack: Thread Id 0x%04x\n", tdata.tid);
+            //        break;
             //    }
             //}
 
-            printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n\n",
+            printf("Start of Memory Region: 0x%p | Region Size: 0x%08llx\n",
                 info[i].StartOfMemoryRange, info[i].DataSize);
             for (const char* m : match[i]) {
                 printf("\tMatch at address: 0x%p\n", m);
@@ -779,15 +815,15 @@ void execute_command(input_command cmd, const dump_context *ctx) {
         break;
     }
     case c_list_memory_regions :
-        if (!list_memory64_regions(&ctx->file_base)) {
-            list_memory_regions(&ctx->file_base);
+        if (!list_memory64_regions(ctx)) {
+            list_memory_regions(ctx);
         }
         break;
     case c_list_memory_regions_info :
-        print_memory_info_list(&ctx->file_base, false);
+        print_memory_info_list(ctx, false);
         break;
     case c_list_memory_regions_info_committed:
-        print_memory_info_list(&ctx->file_base, true);
+        print_memory_info_list(ctx, true);
         break;
     case c_list_modules:
         list_modules(ctx);
